@@ -2,16 +2,33 @@ using System;
 using System.Collections;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.UI;
 
 // Press: shrink (ease-out). Release: spring back with overshoot (ease-out-back).
-public class ButtonFeedback : MonoBehaviour, IPointerDownHandler, IPointerUpHandler
+public class ButtonFeedback : MonoBehaviour, IPointerDownHandler, IPointerUpHandler, IPointerEnterHandler
 {
+    public UISound pressSound = UISound.Click;   // back buttons use UISound.Back
+
     public float pressedScale = 0.94f;
     public float downTime = 0.08f;
     public float upTime = 0.2f;
     Coroutine co;
+    Selectable sel;
 
-    public void OnPointerDown(PointerEventData e) { Tween(pressedScale, downTime, EaseOut); }
+    void Awake() { sel = GetComponent<Selectable>(); }
+    bool Active { get { return sel == null || sel.IsInteractable(); } }
+
+    // hover only exists for a mouse (pointerId < 0); touches would give a double sound
+    public void OnPointerEnter(PointerEventData e)
+    {
+        if (e.pointerId < 0 && Active) AudioManager.PlayUI(UISound.Hover);
+    }
+
+    public void OnPointerDown(PointerEventData e)
+    {
+        if (Active) AudioManager.PlayUI(pressSound);
+        Tween(pressedScale, downTime, EaseOut);
+    }
     public void OnPointerUp(PointerEventData e) { Tween(1f, upTime, EaseOutBack); }
 
     void Tween(float target, float dur, Func<float, float> ease)

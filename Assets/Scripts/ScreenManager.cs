@@ -18,6 +18,9 @@ public class ScreenManager : MonoBehaviour
     string current;
     bool busy;
 
+    public bool Busy { get { return busy; } }
+    public string Current { get { return current; } }
+
     void Awake()
     {
         foreach (var s in screens) { map[s.id] = s.group; Hide(s.group); }
@@ -33,6 +36,7 @@ public class ScreenManager : MonoBehaviour
     {
         if (busy || id == current) return;
         history.Push(current);
+        AudioManager.PlayUI(UISound.Open);
         Switch(id, 1);
     }
 
@@ -41,6 +45,7 @@ public class ScreenManager : MonoBehaviour
     {
         if (busy || id == current) return;
         history.Clear();
+        AudioManager.PlayUI(UISound.Open);
         Switch(id, 1);
     }
 

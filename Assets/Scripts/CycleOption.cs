@@ -23,6 +23,7 @@ public class CycleOption : MonoBehaviour
     void Next()
     {
         index = (index + 1) % options.Length;
+        AudioManager.PlayUI(UISound.Select);
         Apply();
         if (co != null) StopCoroutine(co);
         co = StartCoroutine(Pop());
