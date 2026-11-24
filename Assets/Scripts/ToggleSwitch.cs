@@ -21,7 +21,7 @@ public class ToggleSwitch : MonoBehaviour
         Apply(true);
     }
 
-    void Flip() { isOn = !isOn; Apply(false); }
+    void Flip() { isOn = !isOn; AudioManager.PlayUI(UISound.Select); Apply(false); }
 
     void Apply(bool instant)
     {

@@ -17,14 +17,17 @@ public static class NeonUIBuilder
     static Transform canvasT;
     static TMP_FontAsset font;
 
-    [MenuItem("Tools/Build Neon UI")]
-    public static void Build()
+    static void InitCommon()
     {
         InitColors();
         box = AssetDatabase.GetBuiltinExtraResource<Sprite>("UI/Skin/UISprite.psd");
         // optional: create a TMP font asset from Orbitron and save it here to use it automatically
         font = AssetDatabase.LoadAssetAtPath<TMP_FontAsset>("Assets/Fonts/Orbitron SDF.asset");
+    }
 
+    // Canvas + CanvasScaler + ScreenManager + EventSystem, shared by the menu and the gameplay scene.
+    static GameObject MakeCanvas()
+    {
         var old = GameObject.Find("NeonCanvas");
         if (old != null) Undo.DestroyObjectImmediate(old);
 
@@ -38,8 +41,9 @@ public static class NeonUIBuilder
         scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.MatchWidthOrHeight;
         scaler.matchWidthOrHeight = 0.5f;
         sm = go.AddComponent<ScreenManager>();
+        go.AddComponent<UISoundTrigger>();
 
-        if (Object.FindObjectOfType<EventSystem>() == null)
+        if (Object.FindFirstObjectByType<EventSystem>() == null)
         {
             var es = new GameObject("EventSystem", typeof(EventSystem));
 #if ENABLE_INPUT_SYSTEM && !ENABLE_LEGACY_INPUT_MANAGER
@@ -49,6 +53,15 @@ public static class NeonUIBuilder
 #endif
             Undo.RegisterCreatedObjectUndo(es, "Build Neon UI");
         }
+        return go;
+    }
+
+    [MenuItem("Tools/Build Neon UI")]
+    public static void Build()
+    {
+        InitCommon();
+        var go = MakeCanvas();
+        go.AddComponent<MenuActions>();
 
         var bg = NewRect("Background", canvasT); Stretch(bg);
         var bgi = bg.gameObject.AddComponent<Image>(); bgi.color = BG; bgi.raycastTarget = false;
@@ -61,16 +74,13 @@ public static class NeonUIBuilder
         BuildLeaderboard(Panel("Leaderboard"));
         BuildAchievements(Panel("Achievements"));
         BuildSettings(Panel("Settings"));
-        BuildPause(Panel("Pause"));
-        BuildResults(Panel("Results"));
-        BuildRun(Panel("Run"));
 
         // editor view: only Title visible (set a panel's CanvasGroup alpha to 1 to edit it)
         foreach (var s in sm.screens) { s.group.alpha = s.id == sm.startScreen ? 1 : 0; }
 
         Selection.activeGameObject = go;
         EditorSceneManager.MarkSceneDirty(SceneManager.GetActiveScene());
-        Debug.Log("Neon UI built. Set Game view to 1080x1920 portrait and press Play.");
+        Debug.Log("Neon UI built. Save this scene, then run Tools > Build Gameplay Scene.");
     }
 
     // ---------------------------------------------------------------- screens
@@ -98,7 +108,8 @@ public static class NeonUIBuilder
         Text(p, "NEON DASH", 110, Cyan, C, new Vector2(0, 700), new Vector2(1000, 160));
         Text(p, "PLAYER 01", 36, Cyan, C, new Vector2(0, 570), new Vector2(600, 60));
         Go(Btn(p, "PLAY", Cyan, C, new Vector2(0, 420), new Vector2(640, 170), 64), "ModeSelect");
-        Text(p, "HIGH 449M   |   COINS 17", 36, Gold, C, new Vector2(0, 270), new Vector2(900, 60));
+        var stats = Text(p, "HIGH 0M   |   COINS 0", 36, Gold, C, new Vector2(0, 270), new Vector2(900, 60));
+        stats.gameObject.AddComponent<LiveText>().kind = LiveText.Kind.HighAndCoins;
         Go(Btn(p, "SHOP", Pink, C, new Vector2(0, 100), new Vector2(640, 150)), "Shop");
         Go(Btn(p, "LEADERBOARD", Gold, C, new Vector2(0, -80), new Vector2(640, 150), 40), "Leaderboard");
         Go(Btn(p, "ACHIEVEMENTS", Cyan, C, new Vector2(0, -260), new Vector2(640, 150), 38), "Achievements");
@@ -108,8 +119,12 @@ public static class NeonUIBuilder
     static void BuildModeSelect(RectTransform p)
     {
         Header(p, "SELECT MODE");
-        Go(Card(p, "ENDLESS", "Run until you crash", Cyan, new Vector2(0, 380), new Vector2(900, 300)), "Loadout");
-        Go(Card(p, "TIME TRIAL", "Beat the clock: 60 seconds", Pink, new Vector2(0, 40), new Vector2(900, 300)), "Loadout");
+        var endless = Card(p, "ENDLESS", "Run until you crash", Cyan, new Vector2(0, 380), new Vector2(900, 300));
+        UnityEventTools.AddVoidPersistentListener(endless.onClick, canvasT.GetComponent<MenuActions>().SelectEndless);
+        Go(endless, "Loadout");
+        var trial = Card(p, "TIME TRIAL", "Survive 60 seconds to win", Pink, new Vector2(0, 40), new Vector2(900, 300));
+        UnityEventTools.AddVoidPersistentListener(trial.onClick, canvasT.GetComponent<MenuActions>().SelectTimeTrial);
+        Go(trial, "Loadout");
         Card(p, "ZEN", "LOCKED - reach 500m in one run", Grey, new Vector2(0, -300), new Vector2(900, 300), true);
     }
 
@@ -121,14 +136,15 @@ public static class NeonUIBuilder
         Cycle(p, "TRAIL", new[] { "NO TRAIL", "CYAN TRAIL", "MAGENTA TRAIL" }, Pink, 30);
         Cycle(p, "ITEM", new[] { "NONE", "REVIVE", "COIN MAGNET" }, Purple, -170);
         Go(Btn(p, "SHOP", Pink, C, new Vector2(0, -380), new Vector2(420, 110), 40), "Shop");
-        Go(Btn(p, "START RUN", Cyan, C, new Vector2(0, -560), new Vector2(760, 180), 64), "Run");
+        StartRun(Btn(p, "START RUN", Cyan, C, new Vector2(0, -560), new Vector2(760, 180), 64));
     }
 
     static void BuildShop(RectTransform p)
     {
         Header(p, "SHOP");
         var coin = Box(p, "Coins", Color.Lerp(BG, Gold, .12f), Gold, TR, new Vector2(-60, -105), new Vector2(300, 110), 3);
-        var ct = Text(coin.transform, "COINS 17", 38, Gold, C, Vector2.zero, new Vector2(280, 100)); Stretch(ct.rectTransform);
+        var ct = Text(coin.transform, "COINS 0", 38, Gold, C, Vector2.zero, new Vector2(280, 100)); Stretch(ct.rectTransform);
+        ct.gameObject.AddComponent<LiveText>().kind = LiveText.Kind.ShopCoins;
 
         var tg = p.gameObject.AddComponent<TabGroup>();
         string[] names = { "SKINS", "TRAILS", "ITEMS" };
@@ -169,7 +185,7 @@ public static class NeonUIBuilder
         LbRow(p, "#3", "ZERO_G", "7544M", "22417", White, 210);
         LbRow(p, "#4", "PIXEL", "6310M", "10550", White, 80);
         LbRow(p, "#5", "ECHO_9", "5987M", "1355", White, -50);
-        LbRow(p, "#77", "YOU", "449M", "17", Cyan, -230, true);
+        LbRow(p, "#77", "YOU", "0M", "0", Cyan, -230, true);
     }
 
     static void BuildAchievements(RectTransform p)
@@ -188,49 +204,215 @@ public static class NeonUIBuilder
     static void BuildSettings(RectTransform p)
     {
         Header(p, "SETTINGS");
-        Toggle(p, "SOUND", 500);
-        Toggle(p, "MUSIC", 300);
-        Toggle(p, "VIBRATION", 100);
-        var open = Btn(p, "CREDITS", Gold, C, new Vector2(0, -150), new Vector2(640, 150));
+        MakeSlider(p, "MASTER", VolumeSettings.Master, Cyan, 560);
+        MakeSlider(p, "MUSIC", VolumeSettings.Music, Pink, 410);
+        MakeSlider(p, "SFX", VolumeSettings.Sfx, Gold, 260);
+        MakeSlider(p, "UI", VolumeSettings.Ui, Purple, 110);
+        Toggle(p, "VIBRATION", -80);
+        var open = Btn(p, "CREDITS", Gold, C, new Vector2(0, -280), new Vector2(640, 150));
 
         var pop = NewRect("CreditsPopup", p); Stretch(pop);
         var pi = pop.gameObject.AddComponent<Image>(); pi.color = new Color(0, 0, 0, .9f);
-        var card = Box(pop, "Card", BG, Gold, C, Vector2.zero, new Vector2(900, 900), 4);
-        Text(card.transform, "CREDITS", 64, Gold, C, new Vector2(0, 330), new Vector2(800, 100));
-        Text(card.transform, "NEON DASH\nUI inspired by Neon Runner\nFont: Orbitron (SIL OFL 1.1)\nBuilt in Unity for ITU CS-464 Lab 07", 38, White, C, new Vector2(0, 40), new Vector2(800, 500));
-        var close = Btn(card.transform, "CLOSE", Cyan, C, new Vector2(0, -340), new Vector2(400, 130));
+        var card = Box(pop, "Card", BG, Gold, C, Vector2.zero, new Vector2(900, 1000), 4);
+        Text(card.transform, "CREDITS", 64, Gold, C, new Vector2(0, 380), new Vector2(800, 100));
+        Text(card.transform, "NEON DASH\nUI inspired by Neon Runner\nAll sounds and music: generated by\ntools/generate_audio.py (CC0)\nBuilt in Unity for ITU CS-464 Labs 07-08", 38, White, C, new Vector2(0, 40), new Vector2(800, 560));
+        var close = Btn(card.transform, "CLOSE", Cyan, C, new Vector2(0, -390), new Vector2(400, 130));
+        var trig = canvasT.GetComponent<UISoundTrigger>();
         UnityEventTools.AddBoolPersistentListener(open.onClick, pop.gameObject.SetActive, true);
+        UnityEventTools.AddVoidPersistentListener(open.onClick, trig.PlayOpen);
         UnityEventTools.AddBoolPersistentListener(close.onClick, pop.gameObject.SetActive, false);
+        UnityEventTools.AddVoidPersistentListener(close.onClick, trig.PlayClose);
         pop.gameObject.SetActive(false);
     }
 
-    static void BuildPause(RectTransform p)
+    // label + slider + percentage. The slider is built by hand so the builder needs no prefab.
+    static void MakeSlider(Transform p, string label, string key, Color accent, float y)
     {
+        Text(p, label, 44, White, C, new Vector2(-300, y), new Vector2(300, 90), TextAlignmentOptions.MidlineLeft);
+        var vt = Text(p, "100%", 36, accent, C, new Vector2(360, y), new Vector2(200, 90), TextAlignmentOptions.MidlineRight);
+
+        var root = NewRect("Slider_" + label, p); Set(root, C, new Vector2(30, y), new Vector2(400, 80));
+        var hit = root.gameObject.AddComponent<Image>(); hit.color = new Color(0, 0, 0, 0);   // bigger touch area
+
+        var back = NewRect("Background", root);
+        back.anchorMin = new Vector2(0, .5f); back.anchorMax = new Vector2(1, .5f);
+        back.offsetMin = new Vector2(0, -8); back.offsetMax = new Vector2(0, 8);
+        var bi = back.gameObject.AddComponent<Image>();
+        bi.sprite = box; bi.type = Image.Type.Sliced; bi.color = Dim; bi.raycastTarget = false;
+
+        var area = NewRect("Fill Area", root);
+        area.anchorMin = new Vector2(0, .5f); area.anchorMax = new Vector2(1, .5f);
+        area.offsetMin = new Vector2(0, -8); area.offsetMax = new Vector2(0, 8);
+        var fill = NewRect("Fill", area);
+        fill.anchorMin = Vector2.zero; fill.anchorMax = new Vector2(.5f, 1);
+        fill.offsetMin = Vector2.zero; fill.offsetMax = Vector2.zero;
+        var fi = fill.gameObject.AddComponent<Image>();
+        fi.sprite = box; fi.type = Image.Type.Sliced; fi.color = accent; fi.raycastTarget = false;
+
+        var slide = NewRect("Handle Slide Area", root); Stretch(slide);
+        slide.offsetMin = new Vector2(20, 0); slide.offsetMax = new Vector2(-20, 0);
+        var handle = NewRect("Handle", slide);
+        handle.anchorMin = new Vector2(0, .5f); handle.anchorMax = new Vector2(0, .5f);
+        handle.sizeDelta = new Vector2(40, 70);
+        var hi = handle.gameObject.AddComponent<Image>();
+        hi.sprite = box; hi.type = Image.Type.Sliced; hi.color = White; hi.raycastTarget = false;
+
+        var sl = root.gameObject.AddComponent<Slider>();
+        sl.transition = Selectable.Transition.None;
+        sl.fillRect = fill; sl.handleRect = handle; sl.targetGraphic = hi;
+        sl.direction = Slider.Direction.LeftToRight;
+        sl.minValue = 0; sl.maxValue = 1; sl.wholeNumbers = false; sl.value = 1;
+
+        var vs = root.gameObject.AddComponent<VolumeSlider>();
+        vs.key = key; vs.slider = sl; vs.valueText = vt;
+    }
+
+    static void StartRun(Button b)
+    {
+        UnityEventTools.AddVoidPersistentListener(b.onClick, canvasT.GetComponent<MenuActions>().StartRun);
+    }
+
+    // ---------------------------------------------------------------- gameplay scene
+
+    static readonly Vector2 TC = new Vector2(.5f, 1);
+
+    [MenuItem("Tools/Build Gameplay Scene")]
+    public static void BuildGameplay()
+    {
+        string menuPath = SceneManager.GetActiveScene().path;
+        if (string.IsNullOrEmpty(menuPath))
+        {
+            EditorUtility.DisplayDialog("Build Gameplay Scene",
+                "Save your menu scene first (File > Save As), then run this again with the menu scene open.", "OK");
+            return;
+        }
+        if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
+
+        InitCommon();
+        var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+
+        // camera (portrait, orthographic)
+        var camGo = new GameObject("Main Camera", typeof(Camera), typeof(AudioListener));
+        camGo.tag = "MainCamera";
+        camGo.transform.position = new Vector3(0, 0, -10);
+        var cam = camGo.GetComponent<Camera>();
+        cam.orthographic = true; cam.orthographicSize = 6f;
+        cam.clearFlags = CameraClearFlags.SolidColor; cam.backgroundColor = BG;
+
+        // game systems (publishers)
+        var sys = new GameObject("GameSystems");
+        var health = sys.AddComponent<PlayerHealth>();
+        var wallet = sys.AddComponent<CoinWallet>();
+        var game = sys.AddComponent<GameController>(); game.health = health;
+
+        var playerGo = new GameObject("Player");
+        playerGo.transform.position = new Vector3(-2f, -2f, 0);
+        var pc = playerGo.AddComponent<PlayerController>(); pc.game = game;
+
+        var spawner = sys.AddComponent<WorldSpawner>();
+        spawner.game = game; spawner.player = pc; spawner.health = health; spawner.wallet = wallet;
+
+        var decor = new GameObject("World").AddComponent<WorldDecor>();
+        decor.game = game; decor.groundY = pc.groundY;
+
+        // listeners (each one is independent of the others)
+        var flash = playerGo.AddComponent<HitFlash>(); flash.health = health;
+        camGo.AddComponent<CameraShake>().health = health;
+        var sfx = sys.AddComponent<GameSfxListener>();
+        sfx.player = pc; sfx.health = health; sfx.wallet = wallet; sfx.game = game;
+        sys.AddComponent<GameMusicListener>().game = game;
+
+        // UI
+        var canvasGo = MakeCanvas();
+        sm.startScreen = "Hud";
+        var flow = sys.AddComponent<GameFlow>(); flow.sm = sm; flow.game = game;
+
+        var hudRefs = BuildHud(Panel("Hud"), flow);
+        var hud = canvasGo.AddComponent<HudListener>();
+        hud.health = health; hud.wallet = wallet; hud.game = game;
+        hud.hearts = hudRefs.hearts; hud.coinsText = hudRefs.coins;
+        hud.distanceText = hudRefs.distText; hud.distanceFill = hudRefs.distFill;
+
+        BuildPauseGame(Panel("Pause"), flow);
+        BuildSettings(Panel("Settings"));
+        var rs = canvasGo.AddComponent<ResultsListener>();
+        rs.game = game; rs.wallet = wallet; rs.sm = sm;
+        BuildResultsGame(Panel("Results"), flow, rs);
+
+        foreach (var s in sm.screens) { s.group.alpha = s.id == sm.startScreen ? 1 : 0; }
+
+        // save + build settings (menu = index 0, gameplay = index 1)
+        if (!AssetDatabase.IsValidFolder("Assets/Scenes")) AssetDatabase.CreateFolder("Assets", "Scenes");
+        const string gamePath = "Assets/Scenes/Gameplay.unity";
+        EditorSceneManager.SaveScene(scene, gamePath);
+        EditorBuildSettings.scenes = new[]
+        {
+            new EditorBuildSettingsScene(menuPath, true),
+            new EditorBuildSettingsScene(gamePath, true),
+        };
+        EditorSceneManager.OpenScene(menuPath);
+        Debug.Log("Gameplay scene saved to " + gamePath + ". Build Settings: 0 = " + menuPath + ", 1 = " + gamePath);
+    }
+
+    class HudRefs { public Image[] hearts; public TMP_Text coins, distText; public RectTransform distFill; }
+
+    static HudRefs BuildHud(RectTransform p, GameFlow flow)
+    {
+        var r = new HudRefs();
+        var pause = Btn(p, "II", Cyan, TR, new Vector2(-60, -90), new Vector2(140, 140), 56);
+        UnityEventTools.AddVoidPersistentListener(pause.onClick, flow.Pause);
+
+        r.hearts = new Image[3];
+        for (int i = 0; i < 3; i++)
+            r.hearts[i] = Box(p, "Health" + i, Color.Lerp(BG, Pink, .15f), Pink, TL, new Vector2(60 + i * 100, -80), new Vector2(84, 44), 3);
+        r.coins = Text(p, "COINS 0", 44, Gold, TL, new Vector2(60, -150), new Vector2(520, 70), TextAlignmentOptions.MidlineLeft);
+
+        var bar = Box(p, "DistanceBar", Color.Lerp(BG, Cyan, .1f), Cyan, TC, new Vector2(0, -280), new Vector2(760, 36), 3);
+        var fill = NewRect("DistanceFill", bar.transform);
+        fill.anchorMin = Vector2.zero; fill.anchorMax = new Vector2(0, 1);
+        fill.offsetMin = new Vector2(0, 4); fill.offsetMax = new Vector2(0, -4);
+        var fi = fill.gameObject.AddComponent<Image>(); fi.color = Cyan; fi.raycastTarget = false;
+        r.distFill = fill;
+        r.distText = Text(p, "0 M", 34, White, TC, new Vector2(0, -325), new Vector2(760, 60));
+        return r;
+    }
+
+    static void Overlay(RectTransform p, float alpha)
+    {
+        var o = NewRect("Overlay", p); Stretch(o);
+        var oi = o.gameObject.AddComponent<Image>(); oi.color = new Color(BG.r, BG.g, BG.b, alpha); oi.raycastTarget = false;
+    }
+
+    static void BuildPauseGame(RectTransform p, GameFlow flow)
+    {
+        Overlay(p, .93f);
         Text(p, "PAUSED", 110, Cyan, C, new Vector2(0, 500), new Vector2(900, 160));
-        Back(Btn(p, "RESUME", Cyan, C, new Vector2(0, 200), new Vector2(640, 150), 52));
-        Root(Btn(p, "RESTART", Gold, C, new Vector2(0, 0), new Vector2(640, 150), 52), "Run");
+        var resume = Btn(p, "RESUME", Cyan, C, new Vector2(0, 200), new Vector2(640, 150), 52);
+        UnityEventTools.AddVoidPersistentListener(resume.onClick, flow.Resume);
+        var restart = Btn(p, "RESTART", Gold, C, new Vector2(0, 0), new Vector2(640, 150), 52);
+        UnityEventTools.AddVoidPersistentListener(restart.onClick, flow.Retry);
         Go(Btn(p, "SETTINGS", Purple, C, new Vector2(0, -200), new Vector2(640, 150), 52), "Settings");
-        Root(Btn(p, "MAIN MENU", Pink, C, new Vector2(0, -400), new Vector2(640, 150), 48), "MainMenu");
+        var menu = Btn(p, "MAIN MENU", Pink, C, new Vector2(0, -400), new Vector2(640, 150), 48);
+        UnityEventTools.AddVoidPersistentListener(menu.onClick, flow.ToMenu);
     }
 
-    static void BuildResults(RectTransform p)
+    static void BuildResultsGame(RectTransform p, GameFlow flow, ResultsListener rs)
     {
-        Text(p, "RUN OVER", 120, Red, C, new Vector2(0, 600), new Vector2(1000, 180));
-        Stat(p, "DISTANCE", "449 M", Cyan, 380);
-        Stat(p, "COINS", "16", Gold, 280);
-        Stat(p, "BEST", "449 M", Pink, 180);
-        Root(Btn(p, "RETRY", Cyan, C, new Vector2(0, -20), new Vector2(700, 160), 60), "Run");
-        Root(Btn(p, "WATCH AD: CONTINUE", Gold, C, new Vector2(0, -210), new Vector2(700, 150), 36), "Run");
-        Root(Btn(p, "MAIN MENU", Pink, C, new Vector2(0, -400), new Vector2(700, 150), 48), "MainMenu");
+        Overlay(p, .93f);
+        rs.title = Text(p, "RUN OVER", 120, Red, C, new Vector2(0, 600), new Vector2(1000, 180));
+        rs.distance = StatRow(p, "DISTANCE", "0 M", Cyan, 380);
+        rs.coins = StatRow(p, "COINS", "0", Gold, 280);
+        rs.best = StatRow(p, "BEST", "0 M", Pink, 180);
+        var retry = Btn(p, "RETRY", Cyan, C, new Vector2(0, -20), new Vector2(700, 160), 60);
+        UnityEventTools.AddVoidPersistentListener(retry.onClick, flow.Retry);
+        var menu = Btn(p, "MAIN MENU", Pink, C, new Vector2(0, -210), new Vector2(700, 150), 48);
+        UnityEventTools.AddVoidPersistentListener(menu.onClick, flow.ToMenu);
     }
 
-    // placeholder so you can reach Pause and Results (not one of the 10 screens)
-    static void BuildRun(RectTransform p)
+    static TMP_Text StatRow(Transform p, string label, string val, Color c, float y)
     {
-        Text(p, "RUN IN PROGRESS", 70, White, C, new Vector2(0, 300), new Vector2(900, 120));
-        Text(p, "(gameplay placeholder)", 34, Grey, C, new Vector2(0, 200), new Vector2(900, 80));
-        Go(Btn(p, "II", Cyan, TR, new Vector2(-60, -90), new Vector2(140, 140), 56), "Pause");
-        Go(Btn(p, "DIE (TEST)", Red, C, new Vector2(0, -100), new Vector2(640, 150), 48), "Results");
+        Text(p, label, 36, Grey, C, new Vector2(-210, y), new Vector2(380, 80), TextAlignmentOptions.MidlineRight);
+        return Text(p, val, 56, c, C, new Vector2(240, y), new Vector2(420, 80), TextAlignmentOptions.MidlineLeft);
     }
 
     // ---------------------------------------------------------------- widgets
@@ -258,6 +440,7 @@ public static class NeonUIBuilder
         var b = img.gameObject.AddComponent<Button>();
         b.targetGraphic = img; b.transition = Selectable.Transition.None;
         if (!locked) img.gameObject.AddComponent<ButtonFeedback>();
+        else img.gameObject.AddComponent<LockedTapSound>();
         Text(img.transform, title, 56, accent, C, new Vector2(0, 45), new Vector2(size.x - 40, 80));
         Text(img.transform, desc, 30, locked ? Grey : White, C, new Vector2(0, -45), new Vector2(size.x - 40, 80));
         b.interactable = !locked;
@@ -294,8 +477,13 @@ public static class NeonUIBuilder
         var t = row.transform;
         Text(t, rank, 40, accent, C, new Vector2(-390, 0), new Vector2(140, 90), TextAlignmentOptions.MidlineLeft);
         Text(t, name, 40, White, C, new Vector2(-150, 0), new Vector2(380, 90), TextAlignmentOptions.MidlineLeft);
-        Text(t, dist, 40, Cyan, C, new Vector2(180, 0), new Vector2(260, 90), TextAlignmentOptions.MidlineRight);
-        Text(t, coins, 36, Gold, C, new Vector2(395, 0), new Vector2(170, 90), TextAlignmentOptions.MidlineRight);
+        var dt = Text(t, dist, 40, Cyan, C, new Vector2(180, 0), new Vector2(260, 90), TextAlignmentOptions.MidlineRight);
+        var ct = Text(t, coins, 36, Gold, C, new Vector2(395, 0), new Vector2(170, 90), TextAlignmentOptions.MidlineRight);
+        if (you)   // the player's own row shows real saved data
+        {
+            dt.gameObject.AddComponent<LiveText>().kind = LiveText.Kind.Distance;
+            ct.gameObject.AddComponent<LiveText>().kind = LiveText.Kind.Coins;
+        }
     }
 
     static void AchDone(Transform p, string title, string desc, string icon, float x)
@@ -349,7 +537,12 @@ public static class NeonUIBuilder
 
     static void Go(Button b, string id) { UnityEventTools.AddStringPersistentListener(b.onClick, sm.Go, id); }
     static void Root(Button b, string id) { UnityEventTools.AddStringPersistentListener(b.onClick, sm.GoRoot, id); }
-    static void Back(Button b) { UnityEventTools.AddVoidPersistentListener(b.onClick, sm.Back); }
+    static void Back(Button b)
+    {
+        UnityEventTools.AddVoidPersistentListener(b.onClick, sm.Back);
+        var fb = b.GetComponent<ButtonFeedback>();
+        if (fb != null) fb.pressSound = UISound.Back;   // back/cancel gets its own sound
+    }
 
     static RectTransform NewRect(string name, Transform parent)
     {
