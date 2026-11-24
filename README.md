@@ -55,8 +55,6 @@ Master  (MasterVolume)
   UI    (UIVolume)
 ```
 
-![Audio Mixer](images/audio-mixer.png)
-
 `AudioManager` creates every AudioSource, so the routing is all in one place. It makes itself before the first scene loads and survives scene changes. It owns two music sources (Music group), a pool of six SFX sources (SFX group) and one UI source (UI group). No button has its own AudioSource. `ButtonFeedback` already existed on every button for the press tween, so I made it call `AudioManager.PlayUI` as well.
 
 ## Volume mapping and saving
@@ -184,7 +182,6 @@ tools/generate_audio.py          generates the audio
 
 - All sound effects and music were made by me. `tools/generate_audio.py` synthesizes every file from sine, triangle, saw and square waves and noise, with no samples or third-party audio. I'm releasing them as CC0, so there's no licence to follow.
 - The look of the menus is inspired by the mobile game Neon Runner (Google Play). No assets from it are used.
-- Orbitron (SIL OFL 1.1) is used only if `Assets/Fonts/Orbitron SDF.asset` exists.
 - Unity UGUI, TextMeshPro and Unity's built-in UI sprite. The gameplay shapes are plain coloured squares made in code.
 
 The Shop and Leaderboard are still the static screens from Lab 07, apart from the coin and distance numbers.
